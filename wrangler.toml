@@ -1,3 +1,3 @@
-name = "faf-release-forum-bridge"
+name = "client-release-changelog-bridge"
 main = "index.js"
 compatibility_date = "2026-08-16"
