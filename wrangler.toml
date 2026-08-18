@@ -8,6 +8,14 @@ compatibility_date = "2026-08-16"
 [browser]
 binding = "BROWSER"
 
+# social-preview.html's .canvas element is a fixed 2560x1440px box.
+# The screenshot viewport must match that exactly, or the browser only
+# captures the top-left portion of the canvas (cropped, not scaled).
+# Defaults in index.js are 1200x630 -- override them here instead.
+[vars]
+SCREENSHOT_WIDTH = "2560"
+SCREENSHOT_HEIGHT = "1440"
+
 # Stores rendered preview images + metadata, served back at /r/:slug
 # and /r/:slug/image.png. Create it first with:
 #   wrangler kv namespace create PREVIEWS
