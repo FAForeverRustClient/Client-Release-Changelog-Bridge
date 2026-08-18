@@ -118,7 +118,12 @@ async function publishRelease({ release, repo, origin, env }) {
   // always plain text pulled from og:description. So the changelog
   // has to be part of the posted message, not just the meta JSON.
   const changelog = release.body ? truncate(release.body.trim(), 1500) : "";
-  const content = [`**New release for ${repo.name}**`, previewUrl, changelog]
+  const linkLabel = release.name || release.tag_name;
+  const content = [
+    `**New release for ${repo.name}**`,
+    `[${linkLabel}](${previewUrl})`,
+    changelog,
+  ]
     .filter(Boolean)
     .join("\n\n");
 
