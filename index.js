@@ -120,8 +120,7 @@ async function publishRelease({ release, repo, origin, env }) {
   const changelog = release.body ? truncate(release.body.trim(), 1500) : "";
   const linkLabel = release.name || release.tag_name;
   const content = [
-    `**New release for ${repo.name}**`,
-    `[${linkLabel}](${previewUrl})`,
+    `**New release for ${repo.name}** [${linkLabel}](${previewUrl})`,
     changelog,
   ]
     .filter(Boolean)
