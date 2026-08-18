@@ -243,7 +243,7 @@ function url_origin(href) {
 }
 
 function buildSlug(repo, release) {
-  return `${repo.full_name.replace(/\//g, "--")}-${release.tag_name}`
+  return `${repo.full_name.replace(/\//g, "--")}-${release.tag_name}-${release.id}`
     .toLowerCase()
     .replace(/[^a-z0-9.\-]/g, "-");
 }
