@@ -1,3 +1,19 @@
 name = "client-release-changelog-bridge"
 main = "index.js"
 compatibility_date = "2026-08-16"
+
+# Needed for env.BROWSER.quickAction("screenshot", ...) to render the
+# version-stamped social preview from HTML. Requires compatibility_date
+# 2026-03-24 or later (already satisfied above).
+[browser]
+binding = "BROWSER"
+
+# Stores rendered preview images + metadata, served back at /r/:slug
+# and /r/:slug/image.png. Create it first with:
+#   wrangler kv namespace create PREVIEWS
+# then paste the returned id below. Workers KV free tier (1 GB, 100k
+# reads/day, 1000 writes/day) needs no payment method on the account,
+# unlike R2, which does.
+[[kv_namespaces]]
+binding = "PREVIEWS"
+id = "15dfd1743f794c4e8fa77a8c2573d870"
