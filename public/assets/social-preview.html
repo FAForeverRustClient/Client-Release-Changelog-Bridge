@@ -103,9 +103,11 @@
     <div class="wordmark">Rust Client</div>
 
     <div class="version-wrap">
-      <!-- Wird vom Worker per env.VERSION_PLACEHOLDER ersetzt (siehe index.js).
-           Das Skript unten setzt daraus erst zur Laufzeit das farbige "v"
-           zusammen -- egal ob hier "0.4.2" oder "v0.4.2" ankommt. -->
+      <!-- Wird vom Worker per env.VERSION_PLACEHOLDER ersetzt (siehe index.js),
+           per html.split(placeholder).join(version) -- global im gesamten
+           Dateiinhalt. Dieser Platzhalter darf deshalb NIRGENDWO sonst in
+           dieser Datei auftauchen, auch nicht als String-Literal in Skripten
+           oder Kommentaren, sonst wird er dort mitersetzt. -->
       <div class="version" id="version">{{VERSION}}</div>
     </div>
 
@@ -127,14 +129,8 @@
       var el = document.getElementById('version');
       var raw = el.textContent.trim();
 
-      // Vorschau-Fallback, falls die Datei direkt geöffnet wird,
-      // bevor der Worker {{VERSION}} ersetzt.
-      if (raw.indexOf('{{VERSION}}') !== -1) {
-        raw = '0.4.2';
-      }
-
       // "v"-Präfix vereinheitlichen: funktioniert egal ob der Git-Tag
-      // "v0.4.2" oder "0.4.2" heisst -- kein doppeltes "vv" mehr moeglich.
+      // "v0.4.2" oder "0.4.2" heisst -- kein doppeltes "vv" moeglich.
       var number = /^v/i.test(raw) ? raw.slice(1) : raw;
 
       el.textContent = '';
