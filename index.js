@@ -113,9 +113,18 @@ async function publishRelease({ release, repo, origin, env }) {
 
   const previewUrl = `${origin}/r/${slug}`;
 
+  // Discord only renders markdown (bold, lists, links, ...) in the
+  // message content itself -- an unfurled embed's description is
+  // always plain text pulled from og:description. So the changelog
+  // has to be part of the posted message, not just the meta JSON.
+  const changelog = release.body ? truncate(release.body.trim(), 1500) : "";
+  const content = [`**New release for ${repo.name}**`, previewUrl, changelog]
+    .filter(Boolean)
+    .join("\n\n");
+
   const discordBody = {
     thread_name: `${release.tag_name} — ${release.name || release.tag_name}`,
-    content: `**New release for ${repo.name}**\n${previewUrl}`,
+    content,
   };
 
   const discordRes = await fetch(env.DISCORD_WEBHOOK_URL, {
