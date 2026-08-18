@@ -45,7 +45,6 @@
       justify-content: center;
     }
 
-    /* RustClient übernimmt die alte Logo-Position */
     .wordmark {
       font-family: 'Michroma', sans-serif;
       font-size: 150px;
@@ -57,7 +56,6 @@
       filter: drop-shadow(0 16px 40px rgba(0, 0, 0, 0.55));
     }
 
-    /* Version wie in v2: großer Michroma-Hero */
     .version-wrap {
       margin-top: 44px;
       max-width: 2200px;
@@ -86,7 +84,6 @@
       text-transform: uppercase;
     }
 
-    /* FAF-Logo: an den unteren Rand gepinnt, gräulich, deutlich zurückhaltender */
     .faf-logo {
       position: absolute;
       bottom: 72px;
@@ -106,7 +103,10 @@
     <div class="wordmark">Rust Client</div>
 
     <div class="version-wrap">
-      <div class="version" id="version"><span class="v">v</span>{{VERSION}}</div>
+      <!-- Wird vom Worker per env.VERSION_PLACEHOLDER ersetzt (siehe index.js).
+           Das Skript unten setzt daraus erst zur Laufzeit das farbige "v"
+           zusammen -- egal ob hier "0.4.2" oder "v0.4.2" ankommt. -->
+      <div class="version" id="version">{{VERSION}}</div>
     </div>
 
     <div class="cta">New Release &#8599;</div>
@@ -125,12 +125,24 @@
   <script>
     (function () {
       var el = document.getElementById('version');
+      var raw = el.textContent.trim();
 
       // Vorschau-Fallback, falls die Datei direkt geöffnet wird,
       // bevor der Worker {{VERSION}} ersetzt.
-      if (el.textContent.indexOf('{{VERSION}}') !== -1) {
-        el.innerHTML = '<span class="v">v</span>0.4.2';
+      if (raw.indexOf('{{VERSION}}') !== -1) {
+        raw = '0.4.2';
       }
+
+      // "v"-Präfix vereinheitlichen: funktioniert egal ob der Git-Tag
+      // "v0.4.2" oder "0.4.2" heisst -- kein doppeltes "vv" mehr moeglich.
+      var number = /^v/i.test(raw) ? raw.slice(1) : raw;
+
+      el.textContent = '';
+      var vSpan = document.createElement('span');
+      vSpan.className = 'v';
+      vSpan.textContent = 'v';
+      el.appendChild(vSpan);
+      el.appendChild(document.createTextNode(number));
 
       // Overflow-Schutz für lange Semver-Strings.
       var maxWidth = 2200;
