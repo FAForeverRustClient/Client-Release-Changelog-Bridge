@@ -1,6 +1,6 @@
 // GitHub Release -> Discord Forum Bridge
-// Nimmt GitHub-Release-Webhooks entgegen und erstellt daraus einen neuen
-// Forum-Post im Discord-Kanal (via Discord Webhook + thread_name).
+// Receives GitHub release webhooks and turns them into a new forum post
+// in the Discord channel (via Discord webhook + thread_name).
 
 export default {
   async fetch(request, env) {
@@ -10,8 +10,8 @@ export default {
 
     const body = await request.text();
 
-    // Optional, aber empfohlen: GitHub signiert den Payload mit dem Secret,
-    // das beim Anlegen des Repo-Webhooks eingetragen wurde.
+    // Optional but recommended: GitHub signs the payload with the secret
+    // that was entered when the repo webhook was created.
     if (env.GITHUB_SECRET) {
       const signature = request.headers.get("x-hub-signature-256");
       const valid = await verifySignature(env.GITHUB_SECRET, signature, body);
@@ -20,11 +20,11 @@ export default {
       }
     }
 
-    // Nur auf "release" Events reagieren, und nur wenn ein Release
-    // veröffentlicht (nicht z.B. nur als Draft gespeichert) wurde.
+    // Only react to "release" events, and only when a release was actually
+    // published (not e.g. just saved as a draft).
     const event = request.headers.get("x-github-event");
     if (event === "ping") {
-      // GitHub schickt beim Anlegen des Webhooks einen Test-Ping.
+      // GitHub sends a test ping when the webhook is created.
       return new Response("pong", { status: 200 });
     }
     if (event !== "release") {
@@ -42,7 +42,7 @@ export default {
     const discordBody = {
       thread_name: `${release.tag_name} — ${release.name || release.tag_name}`,
       content:
-        `**Neues Release für ${repo.name}**\n` +
+        `**New release for ${repo.name}**\n` +
         `${release.html_url}\n\n` +
         `${truncate(release.body, 1500)}`,
     };
