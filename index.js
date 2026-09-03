@@ -17,15 +17,31 @@
 // Crawlers don't execute JS, so they read our static tags and stop
 // there; only real browsers run the redirect script.
 //
+// Nothing the crawler needs may depend on a fresh KV read. KV is
+// eventually consistent: a write is usually visible at once in the
+// location that made it, but can take up to 60 seconds elsewhere, and
+// negative lookups are cached too. Discord unfurls within milliseconds
+// of the message being posted, from some other location, and caches the
+// result -- including a failure. A single 404 there costs that release
+// its preview permanently. So the preview page carries its own data in
+// the URL, and the image route re-renders instead of answering 404.
+//
 // Routes:
 //   POST /                  GitHub release webhook receiver
-//   GET  /r/:slug           Open Graph preview page (redirects humans
-//                           to the real GitHub release)
-//   GET  /r/:slug/image.png The rendered preview image (served from KV)
+//   GET  /p/:payload        Open Graph preview page, self contained: the
+//                           tags come out of the URL, not out of KV
+//   GET  /r/:slug           Same page for links posted before /p existed,
+//                           read from KV
+//   GET  /r/:slug/image.png The rendered preview image. KV is only a
+//                           cache here; a miss renders the image again
 
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
+
+    if (request.method === "GET" && url.pathname.startsWith("/p/")) {
+      return handleStatelessPreview(url, env);
+    }
 
     if (request.method === "GET" && url.pathname.startsWith("/r/")) {
       return handlePreviewRequest(url, env);
@@ -101,17 +117,23 @@ async function publishRelease({ release, repo, origin, env }) {
     );
   }
 
-  await env.PREVIEWS.put(
-    `previews/${slug}.json`,
-    JSON.stringify({
-      title: release.name || release.tag_name,
-      description: truncate(stripMarkdown(release.body), 300),
-      htmlUrl: release.html_url,
-      imageUrl,
-    })
-  );
+  const meta = {
+    title: release.name || release.tag_name,
+    description: truncate(stripMarkdown(release.body), 300),
+    htmlUrl: release.html_url,
+    imageUrl,
+    slug,
+    version: release.tag_name,
+  };
 
-  const previewUrl = `${origin}/r/${slug}`;
+  // Kept so links posted by earlier versions of this Worker still resolve.
+  // Nothing posted from here on reads it.
+  await env.PREVIEWS.put(`previews/${slug}.json`, JSON.stringify(meta));
+
+  // The tags travel inside the link, so the crawler gets a complete page on
+  // its first and only try, whatever KV happens to be doing at that moment.
+  const { imageUrl: _unused, ...linkMeta } = meta;
+  const previewUrl = `${origin}/p/${encodePayload(linkMeta)}`;
 
   // Discord only renders markdown (bold, lists, links, ...) in the
   // message content itself -- an unfurled embed's description is
@@ -146,26 +168,83 @@ async function publishRelease({ release, repo, origin, env }) {
 // Preview page + image serving
 // ---------------------------------------------------------------
 
+async function handleStatelessPreview(url, env) {
+  const encoded = url.pathname.split("/").filter(Boolean)[1]; // ["p", payload]
+  if (!encoded) return new Response("Not found", { status: 404 });
+
+  let meta;
+  try {
+    meta = decodePayload(encoded);
+  } catch (err) {
+    return new Response("Not found", { status: 404 });
+  }
+
+  return previewPage(meta, url, env);
+}
+
 async function handlePreviewRequest(url, env) {
   const parts = url.pathname.split("/").filter(Boolean); // ["r", slug, "image.png"?]
   const slug = parts[1];
   if (!slug) return new Response("Not found", { status: 404 });
 
   if (parts[2] === "image.png") {
-    const bytes = await env.PREVIEWS.get(`previews/${slug}.png`, "arrayBuffer");
-    if (!bytes) return new Response("Not found", { status: 404 });
-    return new Response(bytes, {
-      headers: {
-        "Content-Type": "image/png",
-        // Each slug is unique per release, so the image never changes.
-        "Cache-Control": "public, max-age=31536000, immutable",
-      },
-    });
+    return serveImage(slug, url.searchParams.get("v"), env);
   }
 
   const metaText = await env.PREVIEWS.get(`previews/${slug}.json`);
   if (!metaText) return new Response("Not found", { status: 404 });
-  const meta = JSON.parse(metaText);
+
+  return previewPage(JSON.parse(metaText), url, env);
+}
+
+async function serveImage(slug, version, env) {
+  const key = `previews/${slug}.png`;
+  let bytes = await env.PREVIEWS.get(key, "arrayBuffer");
+
+  // A miss here is almost always the write from minutes ago that has not
+  // reached this location yet, not a release we never rendered. Rendering
+  // again costs one browser call; answering 404 costs the preview.
+  if (!bytes && version && slugMatchesVersion(slug, version)) {
+    try {
+      bytes = await takeScreenshot(env, await renderTemplateHtml(env, version));
+      await env.PREVIEWS.put(key, bytes);
+    } catch (err) {
+      console.error("On-demand preview render failed:", err);
+    }
+  }
+
+  if (!bytes) {
+    return Response.redirect(
+      bridgeAssetUrl(
+        env,
+        env.BRIDGE_FALLBACK_IMAGE_PATH || "public/assets/social-preview.png"
+      ),
+      302
+    );
+  }
+
+  return new Response(bytes, {
+    headers: {
+      "Content-Type": "image/png",
+      // Each slug is unique per release, so the image never changes.
+      "Cache-Control": "public, max-age=31536000, immutable",
+    },
+  });
+}
+
+// buildSlug puts the sanitised tag in the middle of the slug. A `?v=` that
+// does not appear there did not come from a link this Worker posted.
+function slugMatchesVersion(slug, version) {
+  const sanitised = String(version).toLowerCase().replace(/[^a-z0-9.\-]/g, "-");
+  return sanitised.length > 0 && slug.includes(`-${sanitised}-`);
+}
+
+function previewPage(meta, url, env) {
+  // Old KV entries store the finished image URL; new links carry the slug and
+  // the version so the image route can rebuild the picture if it has to.
+  const imageUrl = meta.slug
+    ? `${url.origin}/r/${meta.slug}/image.png?v=${encodeURIComponent(meta.version)}`
+    : meta.imageUrl;
 
   const html = `<!doctype html>
 <html>
@@ -175,7 +254,9 @@ async function handlePreviewRequest(url, env) {
 <meta property="og:type" content="website">
 <meta property="og:title" content="${escapeHtml(meta.title)}">
 <meta property="og:description" content="${escapeHtml(meta.description)}">
-<meta property="og:image" content="${meta.imageUrl}">
+<meta property="og:image" content="${imageUrl}">
+<meta property="og:image:width" content="${Number(env.SCREENSHOT_WIDTH) || 1200}">
+<meta property="og:image:height" content="${Number(env.SCREENSHOT_HEIGHT) || 630}">
 <meta property="og:url" content="${url.toString()}">
 <meta name="twitter:card" content="summary_large_image">
 </head>
@@ -237,6 +318,22 @@ async function takeScreenshot(env, html) {
 // ---------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------
+
+// URL safe base64 of the JSON, so the whole preview fits in the link. The
+// posted link is masked behind the release name in Discord, so its length
+// costs nothing.
+function encodePayload(meta) {
+  const bytes = new TextEncoder().encode(JSON.stringify(meta));
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function decodePayload(encoded) {
+  const binary = atob(encoded.replace(/-/g, "+").replace(/_/g, "/"));
+  const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+  return JSON.parse(new TextDecoder().decode(bytes));
+}
 
 function url_origin(href) {
   return new URL(href).origin;
