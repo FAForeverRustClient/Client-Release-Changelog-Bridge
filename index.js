@@ -139,29 +139,65 @@ async function publishRelease({ release, repo, origin, env }) {
   // message content itself -- an unfurled embed's description is
   // always plain text pulled from og:description. So the changelog
   // has to be part of the posted message, not just the meta JSON.
-  const changelog = release.body ? truncate(release.body.trim(), 1500) : "";
+  //
+  // Discord refuses a message over 2000 characters outright, and the
+  // header line alone is several hundred of them (the preview link
+  // carries its data). So the changelog is split into as many messages
+  // as it needs: the first opens the forum thread, the rest follow in it.
+  const changelog = release.body ? release.body.trim() : "";
   const linkLabel = release.name || release.tag_name;
-  const content = [
-    `**New release for ${repo.name}** [${linkLabel}](${previewUrl})`,
-    changelog,
-  ]
-    .filter(Boolean)
-    .join("\n\n");
+  const header = `**New release for ${repo.name}** [${linkLabel}](${previewUrl})`;
+  const [first, ...rest] = splitMessage(
+    [header, changelog].filter(Boolean).join("\n\n"),
+    DISCORD_MESSAGE_LIMIT
+  );
 
-  const discordBody = {
+  // `wait=true` makes Discord answer with the message it created; for a
+  // forum post its channel_id is the new thread, which is where the
+  // follow-ups go.
+  const opened = await postToDiscord(env, "?wait=true", {
     thread_name: `${release.tag_name} — ${release.name || release.tag_name}`,
-    content,
-  };
+    content: first,
+  });
+  if (!opened) return;
 
-  const discordRes = await fetch(env.DISCORD_WEBHOOK_URL, {
+  const threadId = (await opened.json()).channel_id;
+  for (const content of rest) {
+    // In order, one at a time: parallel posts can arrive shuffled.
+    const sent = await postToDiscord(env, `?thread_id=${threadId}`, { content });
+    if (!sent) return;
+  }
+}
+
+const DISCORD_MESSAGE_LIMIT = 2000;
+
+async function postToDiscord(env, query, body) {
+  const res = await fetch(env.DISCORD_WEBHOOK_URL + query, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(discordBody),
+    body: JSON.stringify(body),
   });
-
-  if (!discordRes.ok) {
-    console.error("Discord error:", await discordRes.text());
+  if (!res.ok) {
+    console.error("Discord error:", res.status, await res.text());
+    return null;
   }
+  return res;
+}
+
+// Cuts at the last line break that fits, so a list item or a heading is
+// never torn in half. A single line longer than the limit, which only a
+// pasted wall of text has, is cut where it must be.
+function splitMessage(text, limit) {
+  const parts = [];
+  let remaining = text;
+  while (remaining.length > limit) {
+    let cut = remaining.lastIndexOf("\n", limit);
+    if (cut <= 0) cut = limit;
+    parts.push(remaining.slice(0, cut).trimEnd());
+    remaining = remaining.slice(cut).replace(/^\n+/, "");
+  }
+  if (remaining) parts.push(remaining);
+  return parts;
 }
 
 // ---------------------------------------------------------------
